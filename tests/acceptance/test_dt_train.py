@@ -17,6 +17,7 @@ from src.models.trajectory_transformer import (
     CloneTransformer,
     DecisionTransformer,
 )
+from src.utils.trajectory_sampling import get_filtered_trajectories
 from src.utils.trajectory_writer import TrajectoryWriter
 
 
@@ -118,6 +119,12 @@ def models(environment_config, transformer_model_config):
         transformer_config=copy.deepcopy(transformer_model_config),
     )
 
+    transformer_model_config.n_ctx = 26
+    dt4 = DecisionTransformer(
+        environment_config=environment_config,
+        transformer_config=copy.deepcopy(transformer_model_config),
+    )
+
     transformer_model_config.n_ctx = 1
     bc1 = CloneTransformer(
         environment_config=environment_config,
@@ -140,6 +147,7 @@ def models(environment_config, transformer_model_config):
         "dt1 nctx = 2": dt1,
         "dt2 nctx = 5": dt2,
         "dt3 nctx = 8": dt3,
+        "dt4 nctx = 26": dt4,
         "bc1 nctx = 1": bc1,
         "bc2 nctx = 3": bc2,
         "bc3 nctx = 9": bc3,
@@ -294,21 +302,90 @@ def test_evaluate_dt_agent_with_trajectory_writer(environment_config, dt, run_co
 
         assert os.path.getsize(trajectory_path) > 0
         with open(trajectory_path, "rb") as f:
-            data = pickle.load(f)
-            obs = data["data"]["observations"]
+            data = pickle.load(f)["data"]
+            obs = data["observations"]
             assert type(obs) == np.ndarray
             assert obs.dtype == np.float64
+            assert obs.any() # Assert that observations are non-zero.
             assert obs.shape == (16, 1 + n_ctx // 3, 7, 7, 3), f"obs.shape is {obs.shape}"
 
-            rtg = data["data"]["rtgs"]
+            rtg = data["rtgs"]
             assert type(rtg) == np.ndarray
             assert rtg.dtype == np.float64
-            assert rtg.shape == (16, 1 + n_ctx // 3, 1), f"rtg.shape is {rtg.shape}"
+            assert rtg.shape == (16, 1 + n_ctx // 3), f"rtg.shape is {rtg.shape}"
 
-            actions = data["data"]["actions"]
+            actions = data["actions"]
             assert type(actions) == np.ndarray
             assert actions.dtype == np.int64
-            assert actions.shape == (16, n_ctx // 3, 1), f"actions.shape is {actions.shape}"
+            assert actions.shape == (16, n_ctx // 3), f"actions.shape is {actions.shape}"
+
+    finally:
+        if os.path.exists(trajectory_path):
+            os.remove(trajectory_path)
+
+
+@pytest.mark.parametrize(
+    "dt",
+    [
+        # pytest.param("dt2 nctx = 5"),
+        pytest.param("dt4 nctx = 26"),
+    ],
+    indirect=True,
+)
+def test_evaluate_dt_agent_with_filtered_trajectory_writer(environment_config, dt, run_config, online_config):
+    trajectory_path = "tmp/test_trajectory_writer_writer.pkl"
+    num_trajectories = 50
+    trajectory_shape = num_trajectories if num_trajectories % 8 == 0 else (num_trajectories // 8 + 1) * 8
+    try:
+        environment_config.max_steps = 10  # speed up test
+        batch = 0
+        eval_env_func = make_env(
+            environment_config,
+            seed=batch,
+            idx=0,
+            run_name=f"dt_eval_videos_{batch}",
+        )
+
+        trajectory_writer = TrajectoryWriter(
+            path=trajectory_path,
+            run_config=run_config,
+            environment_config=environment_config,
+            online_config=online_config,
+            model_config=None,
+        )
+
+        statistics = evaluate_dt_agent(
+            env_id=environment_config.env_id,
+            model=dt,
+            env_func=eval_env_func,
+            track=False,
+            initial_rtg=1,
+            trajectories=num_trajectories,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            trajectory_writer=trajectory_writer
+        )
+
+        assert os.path.getsize(trajectory_path) > 0
+        with open(trajectory_path, "rb") as f:
+            data = pickle.load(f)["data"]
+            assert data["observations"].shape[0] == trajectory_shape
+            assert data["observations"].any() # Assert that observations are non-zero.
+
+            rtg_gt_filter = get_filtered_trajectories(copy.deepcopy(data), rtg=("gt", 0.8), instruction=None, target=None)
+            rtg_lt_filter = get_filtered_trajectories(copy.deepcopy(data), rtg=("lt", 0.8), instruction=None, target=None)
+            rtg_eq_filter = get_filtered_trajectories(copy.deepcopy(data), rtg=("eq", 0.8), instruction=None, target=None)
+            assert rtg_gt_filter["observations"].shape[0] + rtg_lt_filter["observations"].shape[0] + rtg_eq_filter["observations"].shape[0] == trajectory_shape
+
+            instruction_key_filter = get_filtered_trajectories(copy.deepcopy(data), rtg=None, instruction="key", target=None)
+            instruction_ball_filter = get_filtered_trajectories(copy.deepcopy(data), rtg=None, instruction="ball", target=None)
+            assert instruction_key_filter["observations"].shape[0] + instruction_ball_filter["observations"].shape[0] == trajectory_shape
+            assert instruction_key_filter["observations"].shape[0] != 0 and instruction_ball_filter["observations"].shape[0] != 0
+
+            target_key_filter = get_filtered_trajectories(copy.deepcopy(data), rtg=None, instruction=None, target="key")
+            target_ball_filter = get_filtered_trajectories(copy.deepcopy(data), rtg=None, instruction=None, target="ball")
+            assert target_key_filter["observations"].shape[0] + target_ball_filter["observations"].shape[0] == trajectory_shape
+            assert target_key_filter["observations"].shape[0] != 0 and target_ball_filter["observations"].shape[0] != 0
+
     finally:
         if os.path.exists(trajectory_path):
             os.remove(trajectory_path)

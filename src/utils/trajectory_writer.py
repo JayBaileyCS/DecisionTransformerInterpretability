@@ -7,6 +7,7 @@ import pickle
 import time
 from typing import Dict, Optional
 
+import copy
 import numpy as np
 from typeguard import typechecked
 
@@ -39,7 +40,7 @@ class TrajectoryWriter:
         self.rewards = []
         self.dones = []
         self.truncated = []
-        self.rtg = []
+        self.rtgs = []
         self.infos = []
         self.path = path
 
@@ -64,14 +65,14 @@ class TrajectoryWriter:
         info: Dict,
         rtg: Optional[np.ndarray]=None,
     ):
-        self.observations.append(next_obs)
-        self.actions.append(action)
-        self.rewards.append(reward)
-        self.dones.append(done)
-        self.truncated.append(truncated)
+        self.observations.append(copy.deepcopy(next_obs))
+        self.actions.append(copy.deepcopy(action))
+        self.rewards.append(copy.deepcopy(reward))
+        self.dones.append(copy.deepcopy(done))
+        self.truncated.append(copy.deepcopy(truncated))
         if rtg is not None:
-            self.rtg.append(rtg)
-        self.infos.append(info)
+            self.rtgs.append(copy.deepcopy(rtg))
+        self.infos.append(copy.deepcopy(info))
 
     def tag_terminated_trajectories(self):
         """
@@ -88,13 +89,13 @@ class TrajectoryWriter:
 
     def write(self, upload_to_wandb: bool = False):
         data = {
-            "observations": np.array(self.observations, dtype=np.float),
-            "actions": np.array(self.actions, dtype=np.int64),
-            "rewards": np.array(self.rewards, dtype=np.float),
-            "dones": np.array(self.dones, dtype=bool),
-            "truncated": np.array(self.truncated, dtype=bool),
-            "rtgs": np.array(self.rtg, dtype=np.float),
-            "infos": np.array(self.infos, dtype=object),
+            "observations": np.array(self.observations, dtype=np.float64), # (batch, max_len, 7, 7, obs_size (3 if dense, 20 if one-hot))
+            "actions": np.array(self.actions, dtype=np.int64).squeeze(-1), # (batch, max_len-1)
+            "rewards": np.expand_dims(np.array(self.rewards, dtype=np.float64), -1), # (batch, 1)
+            "dones": np.expand_dims(np.array(self.dones, dtype=bool), -1), # (batch, 1)
+            "truncated": np.expand_dims(np.array(self.truncated, dtype=bool), -1), # (batch, 1)
+            "rtgs": np.array(self.rtgs, dtype=np.float64).squeeze(-1), # (batch, max_len)
+            "infos": np.expand_dims(np.array(self.infos, dtype=object), -1) # (batch, 1)
         }
         if dataclasses.is_dataclass(self.args):
             metadata = {

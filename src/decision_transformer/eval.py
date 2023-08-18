@@ -172,8 +172,11 @@ def evaluate_dt_agent(
 
         if trajectory_writer is not None and np.any(dones) and max_len > 1:
             for i in batch_reset_indexes[0]: # Why do we have an array of one item here? Can this be multiple items?
+                obs_copy = deepcopy(obs)
+                if False in [t.equal(obs_copy[i, 0, ...], obs_copy[i, j, ...]) for j in range(1, obs.shape[1])]:
+                    print(i, np.array(trajectory_writer.observations).shape[0] + 1)
                 trajectory_writer.accumulate_trajectory(
-                    next_obs=obs[i, ...].detach().cpu().numpy(),
+                    next_obs=obs_copy[i, ...].detach().cpu().numpy(),
                     reward=np.array(rewards[i], dtype=float),
                     done=np.array(dones[i], dtype=bool),
                     truncated=np.array(truncated[i], dtype=bool),
@@ -284,5 +287,4 @@ def evaluate_dt_agent(
             wandb.log(
                 {f"eval/{str(initial_rtg)}/" + key: value}, step=batch_number
             )
-
     return statistics
