@@ -90,12 +90,12 @@ class TrajectoryWriter:
     def write(self, upload_to_wandb: bool = False):
         data = {
             "observations": np.array(self.observations, dtype=np.float64), # (batch, max_len, 7, 7, obs_size (3 if dense, 20 if one-hot))
-            "actions": np.array(self.actions, dtype=np.int64).squeeze(-1), # (batch, max_len-1)
-            "rewards": np.expand_dims(np.array(self.rewards, dtype=np.float64), -1), # (batch, 1)
-            "dones": np.expand_dims(np.array(self.dones, dtype=bool), -1), # (batch, 1)
-            "truncated": np.expand_dims(np.array(self.truncated, dtype=bool), -1), # (batch, 1)
+            "actions": np.array(self.actions, dtype=np.int64), # (batch, max_len-1)
+            "rewards": np.array(self.rewards, dtype=np.float64), # (batch, 1)
+            "dones": np.array(self.dones, dtype=bool), # (batch, 1)
+            "truncated": np.array(self.truncated, dtype=bool), # (batch, 1)
             "rtgs": np.array(self.rtgs, dtype=np.float64).squeeze(-1), # (batch, max_len)
-            "infos": np.expand_dims(np.array(self.infos, dtype=object), -1) # (batch, 1)
+            "infos": np.array(self.infos, dtype=object), # (batch, 1)
         }
         if dataclasses.is_dataclass(self.args):
             metadata = {
