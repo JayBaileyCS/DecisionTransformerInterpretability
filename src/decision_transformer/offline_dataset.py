@@ -92,17 +92,17 @@ class TrajectoryDataset(Dataset):
 
         if self.observation_type != "flat":
             t_observations = rearrange(
-                torch.tensor(observations), "t b h w c -> (b t) h w c"
+                torch.tensor(observations), "b t h w c -> (b t) h w c"
             )
         else:
             t_observations = rearrange(
-                torch.tensor(observations), "t b f -> (b t) f"
+                torch.tensor(observations), "b t f -> (b t) f"
             )
 
-        t_actions = rearrange(torch.tensor(actions), "t b -> (b t)")
-        t_rewards = rearrange(torch.tensor(rewards), "t b -> (b t)")
-        t_dones = rearrange(torch.tensor(dones), "t b -> (b t)")
-        t_truncated = rearrange(torch.tensor(truncated), "t b -> (b t)")
+        t_actions = rearrange(torch.tensor(actions), "b t -> (b t)")
+        t_rewards = rearrange(torch.tensor(rewards), "b t -> (b t)")
+        t_dones = rearrange(torch.tensor(dones), "b t -> (b t)")
+        t_truncated = rearrange(torch.tensor(truncated), "b t -> (b t)")
 
         t_done_or_truncated = torch.logical_or(t_dones, t_truncated)
         done_indices = torch.where(t_done_or_truncated)[0]
