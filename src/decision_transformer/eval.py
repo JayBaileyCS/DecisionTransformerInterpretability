@@ -261,6 +261,9 @@ def evaluate_dt_agent(
     env.close()
     if trajectory_writer is not None:
         trajectory_writer.write()
+    for i in range(np.array(trajectory_writer.observations).shape[0]):
+        s = np.array(trajectory_writer.observations)[i, ...]
+        print(i, np.sum(s[:-1]))
     if track:
         # log statistics at batch number but prefix with eval
         for key, value in statistics.items():
