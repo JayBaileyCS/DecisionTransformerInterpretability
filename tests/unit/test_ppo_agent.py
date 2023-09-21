@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 
 import gymnasium as gym
+from gym import spaces
 import pytest
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from typing import Optional
 
 # only use get_agent class test
 from src.config import LSTMModelConfig, TransformerModelConfig
@@ -110,8 +112,8 @@ def environment_config():
         capture_video: bool = False
         video_dir: str = "videos"
         render_mode: str = "rgb_array"
-        action_space: None = None
-        observation_space: None = None
+        action_space: Optional[spaces.Discrete] = None
+        observation_space: Optional[spaces.Discrete] = None
         device: str = "cpu"
         action_space = env.action_space
         observation_space = env.observation_space

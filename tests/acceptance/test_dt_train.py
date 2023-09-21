@@ -1,5 +1,5 @@
 import copy
-import numpy as np 
+import numpy as np
 import os
 import pickle
 
@@ -19,6 +19,7 @@ from src.models.trajectory_transformer import (
 )
 from src.utils.trajectory_writer import TrajectoryWriter
 
+import tests.unit.test_utils as test_utils
 
 @pytest.fixture
 def trajectory_data_set():
@@ -29,6 +30,17 @@ def trajectory_data_set():
     )
     return trajectory_data_set
 
+@pytest.fixture
+def run_config():
+    run_config = RunConfig(
+        exp_name="test",
+        seed=1,
+        track=False,
+        wandb_project_name="test",
+        wandb_entity="test",
+    )
+
+    return run_config
 
 @pytest.fixture
 def run_config():
@@ -58,6 +70,30 @@ def environment_config(trajectory_data_set):
 
     return environment_config
 
+@pytest.fixture
+def online_config():
+    online_config = OnlineTrainConfig(
+        use_trajectory_model=False,
+        hidden_size=64,
+        total_timesteps=180000,
+        learning_rate=0.00025,
+        decay_lr=False,
+        num_envs=4,
+        num_steps=128,
+        gamma=0.99,
+        gae_lambda=0.95,
+        num_minibatches=4,
+        update_epochs=4,
+        clip_coef=0.4,
+        ent_coef=0.2,
+        vf_coef=0.5,
+        max_grad_norm=2,
+        trajectory_path=None,
+        fully_observed=False,
+        device=torch.device("cpu"),
+    )
+
+    return online_config
 
 @pytest.fixture
 def online_config():
@@ -261,12 +297,10 @@ def test_evaluate_dt_agent(environment_config, dt):
     indirect=True,
 )
 def test_evaluate_dt_agent_with_trajectory_writer(environment_config, dt, run_config, online_config):
-    trajectory_path = "tmp/test_trajectory_writer_writer.pkl"
     n_ctx = dt.transformer_config.n_ctx
+    trajectory_path = "tmp/test_trajectory_writer_writer.pkl"
     try:
         environment_config.max_steps = 10  # speed up test
-        batch = 0
-        eval_env_func = make_env(
             environment_config,
             seed=batch,
             idx=0,
