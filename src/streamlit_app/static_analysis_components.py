@@ -1,69 +1,70 @@
+import itertools
+
 import einops
+import networkx as nx
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 import torch
 from fancy_einsum import einsum
-from .utils import tensor_to_long_data_frame, get_row_names_from_index_labels
-from .components import create_search_component
-import einops
-import itertools
-
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
 
 # create a pyvis network
 from pyvis.network import Network
-import networkx as nx
-
-
-from src.visualization import (
-    get_param_stats,
-    plot_param_stats,
-    tensor_cosine_similarity_heatmap,
-    get_cosine_sim_df,
-)
-
-from .constants import (
-    IDX_TO_ACTION,
-    IDX_TO_STATE,
-    three_channel_schema,
-    twenty_idx_format_func,
-    SPARSE_CHANNEL_NAMES,
-    POSITION_NAMES,
-    ACTION_NAMES,
-    STATE_EMBEDDING_LABELS,
-    get_all_neuron_labels,
-)
-from .visualizations import plot_heatmap
 
 from src.streamlit_app.static_analysis.gridmaps import (
-    ov_gridmap_component,
-    qk_gridmap_component,
     neuron_projection_gridmap_component,
+    qk_gridmap_component,
+)
+
+from src.streamlit_app.static_analysis.pca import (
+    get_pca,
+    get_2d_scatter_plot,
+    get_3d_scatter_plot,
+    get_scree_plot,
+    get_loadings_plot,
 )
 
 from src.streamlit_app.static_analysis.svd_projection import (
     embedding_projection_onto_svd_component,
     mlp_out_to_svd_in_component,
-    svd_out_to_unembedding_component,
-    svd_out_to_svd_in_component,
     svd_out_to_mlp_in_component,
+    svd_out_to_svd_in_component,
+    svd_out_to_unembedding_component,
 )
-
+from src.streamlit_app.static_analysis.ui import layer_head_channel_selector
 from src.streamlit_app.static_analysis.virtual_weights import (
-    get_qk_circuit,
-    get_ov_circuit,
     get_full_qk_state_state,
+    get_ov_circuit,
+    get_qk_circuit,
+    show_ov_action_action_component,
+    show_ov_pos_action_component,
+    show_ov_rtg_action_component,
+    show_ov_state_action_component,
+)
+from src.visualization import (
+    get_cosine_sim_df,
+    get_param_stats,
+    plot_param_stats,
+    tensor_cosine_similarity_heatmap,
 )
 
-from src.streamlit_app.static_analysis.ui import (
-    layer_head_k_selector_ui,
-    embedding_matrix_selection_ui,
-    layer_head_channel_selector,
+from .components import create_search_component
+from .constants import (
+    ACTION_NAMES,
+    IDX_TO_ACTION,
+    POSITION_NAMES,
+    SPARSE_CHANNEL_NAMES,
+    STATE_EMBEDDING_LABELS,
+    get_all_neuron_labels,
+    three_channel_schema,
+    twenty_idx_format_func,
 )
-
+from .utils import get_row_names_from_index_labels, tensor_to_long_data_frame
+from .visualizations import plot_heatmap
 
 all_index_labels = [
     SPARSE_CHANNEL_NAMES,
@@ -96,333 +97,250 @@ def show_param_statistics(_dt):
 
 
 # @st.cache_data(experimental_allow_widgets=True)
-def show_embeddings(_dt):
+def show_embeddings(_dt, cache):
     with st.expander("Embeddings"):
-        all_index_labels = [
-            SPARSE_CHANNEL_NAMES,
-            list(range(7)),
-            list(range(7)),
-        ]
-        position_index_labels = [
-            list(range(7)),
-            list(range(7)),
-        ]
+        a, b = st.columns(2)
 
-        singe_action_index_labels = [IDX_TO_ACTION[i] for i in range(7)]
-
-        both_action_index_labels = [
-            [IDX_TO_ACTION[i] for i in range(7)],
-            [IDX_TO_ACTION[i] for i in range(7)],
-        ]
-
-        all_embeddings_tab, pca_tab = st.tabs(["Raw", "PCA"])
-
-        with all_embeddings_tab:
-            state_tab, in_action_tab, out_action_tab = st.tabs(
-                ["State", "In Action", "Out Action"]
+        with a:
+            selected_embeddings = st.multiselect(
+                "Select Embeddings",
+                options=range(len(STATE_EMBEDDING_LABELS)),
+                key="embedding",
+                format_func=lambda x: STATE_EMBEDDING_LABELS[x],
+                default=[263, 312, 258, 307],
             )
 
-            with state_tab:
-                a, b, c, d = st.columns(4)
-                with a:
-                    aggregation_group = st.selectbox(
-                        "Select aggregation method",
-                        ["None", "Channels", "Positions"],
-                    )
+        with b:
+            cluster = st.checkbox("Cluster")
+            centre_embeddings = st.checkbox("Centre Embeddings")
 
-                with c:
-                    cluster = st.checkbox("Cluster")
+        embeddings = _dt.state_embedding.weight.detach().T
 
-                embedding = _dt.state_embedding.weight.detach().T
+        if not selected_embeddings:
+            return
 
-                with d:
-                    centre_embeddings = st.checkbox("Centre Embeddings")
-                    if centre_embeddings:
-                        embedding = embedding - embedding.mean(dim=0)
+        # filter labels
+        selected_embeddings_labels = [
+            STATE_EMBEDDING_LABELS[i] for i in selected_embeddings
+        ]
 
-                df = get_cosine_sim_df(embedding)
-                df.columns = STATE_EMBEDDING_LABELS
-                df.index = STATE_EMBEDDING_LABELS
+        # filter embeddings
+        embeddings = embeddings[selected_embeddings, :]
 
-                if aggregation_group == "None":
-                    with b:
-                        selected_embeddings = st.multiselect(
-                            "Select Embeddings",
-                            options=STATE_EMBEDDING_LABELS,
-                            key="embedding",
-                            default=[],
-                        )
-                        if selected_embeddings:
-                            df = df.loc[
-                                selected_embeddings, selected_embeddings
-                            ]
+        # centre
+        if centre_embeddings:
+            embeddings = embeddings - embeddings.mean(dim=0)
 
-                    fig = plot_heatmap(
-                        df,
-                        cluster,
-                        show_labels=df.shape[0] < 20,
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+        # normalise
+        embeddings = embeddings / embeddings.norm(dim=1, keepdim=True)
+        df = get_cosine_sim_df(
+            embeddings, selected_embeddings_labels, selected_embeddings_labels
+        )
 
-                if aggregation_group == "Channels":
-                    with b:
-                        selected_positions = st.multiselect(
-                            "Select Positions",
-                            options=list(range(len(POSITION_NAMES))),
-                            format_func=lambda x: POSITION_NAMES[x],
-                            key="position embedding",
-                            default=[5, 6],
-                        )
+        pca_df, percent_variance, loadings, fitted_pca = get_pca(
+            embeddings, selected_embeddings_labels
+        )
 
-                    image_shape = _dt.environment_config.observation_space[
-                        "image"
-                    ].shape
+        pca_tab, heatmap_tab = st.tabs(["PCA", "Heatmap"])
 
-                    embedding = einops.rearrange(
-                        embedding,
-                        "(c x y) d -> x y c d",
-                        x=image_shape[0],
-                        y=image_shape[1],
-                        c=image_shape[-1],
-                    )
-
-                    if selected_positions:
-                        position_index_labels = list(
-                            itertools.product(*position_index_labels)
-                        )
-                        selected_rows = torch.tensor(
-                            [
-                                position_index_labels[i][0]
-                                for i in selected_positions
-                            ]
-                        )
-                        selected_cols = torch.tensor(
-                            [
-                                position_index_labels[i][1]
-                                for i in selected_positions
-                            ]
-                        )
-
-                        mask = torch.zeros(7, 7)
-                        mask[selected_rows, selected_cols] = 1
-
-                        if st.checkbox("Show mask"):
-                            st.plotly_chart(px.imshow(mask))
-
-                        embedding = embedding[mask.to(bool)]
-
-                        embedding = einops.reduce(
-                            embedding, "p c d -> c d", "sum"
-                        )
-
-                    else:
-                        embedding = einops.reduce(
-                            embedding, "x y c d -> c d", "sum"
-                        )
-
-                    fig = tensor_cosine_similarity_heatmap(
-                        embedding, labels=SPARSE_CHANNEL_NAMES
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                if aggregation_group == "Positions":
-                    with b:
-                        selected_channels = st.multiselect(
-                            "Select Positions",
-                            options=list(range(len(SPARSE_CHANNEL_NAMES))),
-                            format_func=lambda x: SPARSE_CHANNEL_NAMES[x],
-                            key="position embedding",
-                            default=[5, 6],
-                        )
-
-                    image_shape = _dt.environment_config.observation_space[
-                        "image"
-                    ].shape
-
-                    embedding = einops.rearrange(
-                        embedding,
-                        "(c x y) d -> x y c d",
-                        x=image_shape[0],
-                        y=image_shape[1],
-                        c=image_shape[-1],
-                    )
-
-                    if selected_channels:
-                        embedding = embedding[:, :, selected_channels]
-                    embedding = einops.reduce(
-                        embedding, "x y c d -> (x y) d", "sum"
-                    )
-
-                    fig = tensor_cosine_similarity_heatmap(
-                        embedding,
-                        labels=["x", "y"],
-                        index_labels=position_index_labels,
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-            with in_action_tab:
-                embedding = _dt.action_embedding[0].weight.detach()[:-1, :]
-
-                df = get_cosine_sim_df(embedding)
-                df.columns = ACTION_NAMES
-                df.index = ACTION_NAMES
-
-                fig = tensor_cosine_similarity_heatmap(
-                    embedding, labels=ACTION_NAMES
-                )
-
-                if st.checkbox("Centre Embeddings", key="centre in action"):
-                    embedding = embedding - embedding.mean(dim=0)
-
-                fig = plot_heatmap(
-                    df,
-                    cluster=True,
-                    show_labels=True,
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            with out_action_tab:
-                embedding = _dt.action_predictor.weight.detach()
-
-                df = get_cosine_sim_df(embedding)
-                df.columns = ACTION_NAMES
-                df.index = ACTION_NAMES
-
-                if st.checkbox("Centre Embeddings", key="centre out action"):
-                    embedding = embedding - embedding.mean(dim=0)
-
-                fig = plot_heatmap(
-                    df,
-                    cluster=True,
-                    show_labels=True,
-                )
-                st.plotly_chart(fig, use_container_width=True)
+        with heatmap_tab:
+            fig = plot_heatmap(
+                df,
+                color_continuous_midpoint=0,
+                cluster=cluster,
+                show_labels=df.shape[0] < 20,
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
         with pca_tab:
-            state_tab, in_action_tab, out_action_tab = st.tabs(
-                ["State", "In Action", "Out Action"]
-            )
+            (
+                scatter_2d_tab,
+                scatter_3d_tab,
+                scree_plot_tab,
+                loadings_tab,
+            ) = st.tabs(["2D-Scatter", "3D-Scatter", "Scree Plot", "Loadings"])
 
-            with state_tab:
-                embedding = _dt.state_embedding.weight.detach().T
-
-                with st.spinner("Performing PCA..."):
-                    # Normalize the data
-                    normalized_embedding = StandardScaler().fit_transform(
-                        embedding
-                    )
-
-                    # Perform PCA
-                    pca = PCA(n_components=2)
-                    pca_results = pca.fit_transform(normalized_embedding)
-
-                    # st.write(pca_results)
-                    # Create a dataframe for the results
-                    pca_df = pd.DataFrame(
-                        data=pca_results,
-                        index=get_row_names_from_index_labels(
-                            ["State", "x", "y"], all_index_labels
-                        ),
-                        columns=["PC1", "PC2"],
-                    )
-                    pca_df.reset_index(inplace=True, names="State")
-                    pca_df["Channel"] = pca_df["State"].apply(
-                        lambda x: x.split(",")[0]
-                    )
-
-                states = set(pca_df["State"].values)
-                selected_channels = st.multiselect(
-                    "Select Observation Channels",
-                    options=list(states),
-                )
-
-                states_to_filter = [state for state in selected_channels]
-                if states_to_filter:
-                    pca_df_filtered = pca_df[
-                        pca_df["State"].isin(states_to_filter)
-                    ]
-                else:
-                    pca_df_filtered = pca_df
-
-                # Create the plot
-                fig = px.scatter(
-                    pca_df_filtered,
-                    x="PC1",
-                    y="PC2",
-                    title="PCA on Embeddings",
-                    hover_data=["State", "PC1", "PC2"],
-                    color="Channel",
-                )
-
+            with scatter_2d_tab:
+                fig = get_2d_scatter_plot(pca_df, percent_variance)
                 st.plotly_chart(fig, use_container_width=True)
 
-            with in_action_tab:
-                embedding = _dt.action_embedding[0].weight.detach()
-
-                with st.spinner("Performing PCA..."):
-                    # Normalize the data
-                    normalized_embedding = StandardScaler().fit_transform(
-                        embedding
-                    )
-
-                    # Perform PCA
-                    pca = PCA(n_components=2)
-                    pca_results = pca.fit_transform(normalized_embedding)
-
-                    # st.write(pca_results)
-                    # Create a dataframe for the results
-                    pca_df = pd.DataFrame(
-                        data=pca_results,
-                        index=singe_action_index_labels + ["Null"],
-                        columns=["PC1", "PC2"],
-                    )
-                    pca_df.reset_index(inplace=True, names="Action")
-
-                # Create the plot
-                fig = px.scatter(
-                    pca_df,
-                    x="PC1",
-                    y="PC2",
-                    title="PCA on Embeddings",
-                    hover_data=["Action", "PC1", "PC2"],
-                    color="Action",
-                )
-
+            with scatter_3d_tab:
+                fig = get_3d_scatter_plot(pca_df, percent_variance)
                 st.plotly_chart(fig, use_container_width=True)
 
-            with out_action_tab:
-                embedding = _dt.action_predictor.weight.detach()
-
-                with st.spinner("Performing PCA..."):
-                    # Normalize the data
-                    normalized_embedding = StandardScaler().fit_transform(
-                        embedding
-                    )
-
-                    # Perform PCA
-                    pca = PCA(n_components=2)
-                    pca_results = pca.fit_transform(normalized_embedding)
-
-                    # st.write(pca_results)
-                    # Create a dataframe for the results
-                    pca_df = pd.DataFrame(
-                        data=pca_results,
-                        index=singe_action_index_labels,
-                        columns=["PC1", "PC2"],
-                    )
-                    pca_df.reset_index(inplace=True, names="Action")
-
-                # Create the plot
-                fig = px.scatter(
-                    pca_df,
-                    x="PC1",
-                    y="PC2",
-                    title="PCA on Embeddings",
-                    hover_data=["Action", "PC1", "PC2"],
-                    color="Action",
+            with scree_plot_tab:
+                fig = get_scree_plot(
+                    percent_variance, selected_embeddings_labels
                 )
-
                 st.plotly_chart(fig, use_container_width=True)
+
+            with loadings_tab:
+                fig = get_loadings_plot(loadings, selected_embeddings_labels)
+                st.plotly_chart(fig, use_container_width=True)
+
+        # with in_action_tab:≠
+        #     embedding = _dt.action_embedding[0].weight.detach()[:-1, :]
+
+        #     df = get_cosine_sim_df(embedding)
+        #     df.columns = ACTION_NAMES
+        #     df.index = ACTION_NAMES
+
+        #     fig = tensor_cosine_similarity_heatmap(
+        #         embedding, labels=ACTION_NAMES
+        #     )
+
+        #     if st.checkbox("Centre Embeddings", key="centre in action"):
+        #         embedding = embedding - embedding.mean(dim=0)
+
+        #     fig = plot_heatmap(
+        #         df,
+        #         cluster=True,
+        #         show_labels=True,
+        #     )
+        #     st.plotly_chart(fig, use_container_width=True)
+
+        # with out_action_tab:
+        #     embedding = _dt.action_predictor.weight.detach()
+
+        #     df = get_cosine_sim_df(embedding)
+        #     df.columns = ACTION_NAMES
+        #     df.index = ACTION_NAMES
+
+        #     if st.checkbox("Centre Embeddings", key="centre out action"):
+        #         embedding = embedding - embedding.mean(dim=0)
+
+        #     fig = plot_heatmap(
+        #         df,
+        #         cluster=True,
+        #         show_labels=True,
+        #     )
+        #     st.plotly_chart(fig, use_container_width=True)
+
+        # with pca_tab:
+        #     state_tab, in_action_tab, out_action_tab = st.tabs(
+        #         ["State", "In Action", "Out Action"]
+        #     )
+
+        #     with state_tab:
+        #         embedding = _dt.state_embedding.weight.detach().T
+
+        #         with st.spinner("Performing PCA..."):
+        #             # Normalize the data
+        #             normalized_embedding = StandardScaler().fit_transform(
+        #                 embedding
+        #             )
+
+        #             # Perform PCA
+        #             pca = PCA(n_components=2)
+        #             pca_results = pca.fit_transform(normalized_embedding)
+
+        #             # st.write(pca_results)
+        #             # Create a dataframe for the results
+        #             pca_df = pd.DataFrame(
+        #                 data=pca_results,
+        #                 index=get_row_names_from_index_labels(
+        #                     ["State", "x", "y"], all_index_labels
+        #                 ),
+        #                 columns=["PC1", "PC2"],
+        #             )
+        #             pca_df.reset_index(inplace=True, names="State")
+        #             pca_df["Channel"] = pca_df["State"].apply(
+        #                 lambda x: x.split(",")[0]
+        #             )
+
+        #         states = set(pca_df["State"].values)
+        #         selected_channels = st.multiselect(
+        #             "Select Observation Channels",
+        #             options=list(states),
+        #         )
+
+        #         states_to_filter = [state for state in selected_channels]
+        #         if states_to_filter:
+        #             pca_df_filtered = pca_df[
+        #                 pca_df["State"].isin(states_to_filter)
+        #             ]
+        #         else:
+        #             pca_df_filtered = pca_df
+
+        #         # Create the plot
+        #         fig = px.scatter(
+        #             pca_df_filtered,
+        #             x="PC1",
+        #             y="PC2",
+        #             title="PCA on Embeddings",
+        #             hover_data=["State", "PC1", "PC2"],
+        #             color="Channel",
+        #         )
+
+        #         st.plotly_chart(fig, use_container_width=True)
+
+        #     with in_action_tab:
+        #         embedding = _dt.action_embedding[0].weight.detach()
+
+        #         with st.spinner("Performing PCA..."):
+        #             # Normalize the data
+        #             normalized_embedding = StandardScaler().fit_transform(
+        #                 embedding
+        #             )
+
+        #             # Perform PCA
+        #             pca = PCA(n_components=2)
+        #             pca_results = pca.fit_transform(normalized_embedding)
+
+        #             # st.write(pca_results)
+        #             # Create a dataframe for the results
+        #             pca_df = pd.DataFrame(
+        #                 data=pca_results,
+        #                 index=singe_action_index_labels + ["Null"],
+        #                 columns=["PC1", "PC2"],
+        #             )
+        #             pca_df.reset_index(inplace=True, names="Action")
+
+        #         # Create the plot
+        #         fig = px.scatter(
+        #             pca_df,
+        #             x="PC1",
+        #             y="PC2",
+        #             title="PCA on Embeddings",
+        #             hover_data=["Action", "PC1", "PC2"],
+        #             color="Action",
+        #         )
+
+        #         st.plotly_chart(fig, use_container_width=True)
+
+        #     with out_action_tab:
+        #         embedding = _dt.action_predictor.weight.detach()
+
+        #         with st.spinner("Performing PCA..."):
+        #             # Normalize the data
+        #             normalized_embedding = StandardScaler().fit_transform(
+        #                 embedding
+        #             )
+
+        #             # Perform PCA
+        #             pca = PCA(n_components=2)
+        #             pca_results = pca.fit_transform(normalized_embedding)
+
+        #             # st.write(pca_results)
+        #             # Create a dataframe for the results
+        #             pca_df = pd.DataFrame(
+        #                 data=pca_results,
+        #                 index=singe_action_index_labels,
+        #                 columns=["PC1", "PC2"],
+        #             )
+        #             pca_df.reset_index(inplace=True, names="Action")
+
+        #         # Create the plot
+        #         fig = px.scatter(
+        #             pca_df,
+        #             x="PC1",
+        #             y="PC2",
+        #             title="PCA on Embeddings",
+        #             hover_data=["Action", "PC1", "PC2"],
+        #             color="Action",
+        #         )
+
+        #         st.plotly_chart(fig, use_container_width=True)
 
 
 def show_neuron_directions(_dt):
@@ -789,216 +707,28 @@ def show_ov_circuit(_dt):
 
         st.latex(
             r"""
-            OV_{circuit} = W_{U(action)} W_O W_V W_{E(State)}
+            OV_{circuit} = W_{U(action)} W_O W_V W_{E(i)}  \text{ for } i \in \{rtg, state\, \text{or} \, action\, position\, time\}
             """
         )
 
-        height, width, channels = _dt.environment_config.observation_space[
-            "image"
-        ].shape
-        n_layers = _dt.transformer_config.n_layers
-        n_actions = _dt.environment_config.action_space.n
-        n_heads = _dt.transformer_config.n_heads
-
-        format_func = (
-            lambda x: three_channel_schema(x)
-            if channels == 3
-            else twenty_idx_format_func(x)
+        state_tab, action_tab, rtg_tab, pos_tab = st.tabs(
+            ["OV(state)", "OV(action)", "OV(rtg)", "OV(pos)"]
         )
 
-        W_OV = get_ov_circuit(_dt)
-        W_U = _dt.action_predictor.weight
-        W_E = _dt.state_embedding.weight
+        with state_tab:
+            show_ov_state_action_component(_dt)
 
-        # st.plotly_chart(px.imshow(W_OV.detach().numpy(), facet_col=0), use_container_width=True)
-        OV_circuit_full = einsum(
-            "d_res_in emb, layer head d_res_in d_res_out, action d_res_out -> layer head emb action",
-            W_E,
-            W_OV,
-            W_U,
-        )
+        with action_tab:
+            show_ov_action_action_component(_dt)
 
-        OV_circuit_full = OV_circuit_full.reshape(
-            n_layers, n_heads, channels, height, width, n_actions
-        )
+        with rtg_tab:
+            show_ov_rtg_action_component(_dt)
 
-        df = tensor_to_long_data_frame(
-            OV_circuit_full,
-            dimension_names=["Layer", "Head", "Channel", "X", "Y", "Action"],
-        )
-        df = df.sort_values(by=["Layer", "Head", "Action"])
-        df["Channel"] = df["Channel"].map(format_func)
-        df["Layer"] = df["Layer"].map(lambda x: f"L{x}")
-        df["Head"] = df["Layer"] + df["Head"].map(lambda x: f"H{x}")
-        df["Action"] = df["Action"].map(IDX_TO_ACTION)
-        df["Embedding"] = (
-            df["Channel"]
-            + ", ("
-            + df["X"].astype(str)
-            + ", "
-            + df["Y"].astype(str)
-            + ")"
-        )
-
-        abs_max_val = df.Score.abs().max().item()
-
-        abs_max_val = st.slider(
-            "Max Absolute Value Color",
-            min_value=abs_max_val / 10,
-            max_value=abs_max_val,
-            value=abs_max_val,
-        )
-
-        search_tab, comparison_tab, minimize = st.tabs(
-            ["Unstructured", "Comparison View", "Minimize"]
-        )
-
-        with search_tab:
-            # reset index
-            df = df.reset_index(drop=True)
-
-            # make a strip plot
-            fig = px.scatter(
-                df,
-                x=df.index,
-                y="Score",
-                color="Action",
-                hover_data=["Head", "Channel", "X", "Y", "Action"],
-                labels={"value": "Congruence"},
-            )
-
-            # update x axis to hide the tick labels, and remove the label
-            fig.update_xaxes(showticklabels=False, title=None)
-            st.plotly_chart(fig, use_container_width=True)
-
-        with comparison_tab:
-            # for one of the heads selected, and a pair of the actins selected,
-            # we want a scatter plot of score vs score
-            # use a multiselect for each, but them in three  columns
-
-            b, c, d, a = st.columns(4)
-
-            with b:
-                action_1 = st.selectbox(
-                    "Select Action 1",
-                    options=df.Action.unique(),
-                    index=0,
-                )
-            with c:
-                action_2 = st.selectbox(
-                    "Select Action 2",
-                    options=df.Action.unique(),
-                    index=1,
-                )
-            with d:
-                # channel selection
-                selected_channels_2 = st.multiselect(
-                    "Select Channels",
-                    options=df.Channel.unique(),
-                    key="channels ov comparison",
-                    default=["key", "ball"],
-                )
-
-            with a:
-                use_small_multiples = st.checkbox("Use Small Multiples")
-
-            # filter the dataframe
-            filtered_df = df[
-                (df["Action"].isin([action_1, action_2]))
-                & (df["Channel"].isin(selected_channels_2))
-            ]
-
-            # reshape the df so we have the scores of one action in one column and the scores of the other in another
-            filtered_df = filtered_df.pivot_table(
-                index=["Head", "Embedding"],
-                columns="Action",
-                values="Score",
-            ).reset_index()
-            # rename the columns
-
-            filtered_df.columns = [
-                "Head",
-                "Embedding",
-                action_1,
-                action_2,
-            ]
-
-            if use_small_multiples:
-                # make a scatter plot of the two scores
-                fig = px.scatter(
-                    filtered_df,
-                    x=action_1,
-                    y=action_2,
-                    color="Head",
-                    hover_data=["Head", "Embedding"],
-                    facet_col="Head",
-                    facet_col_wrap=4,
-                    labels={
-                        "value": "Congruence",
-                    },
-                )
-                # make plot taller
-                fig.update_layout(height=800)
-            else:
-                fig = px.scatter(
-                    filtered_df,
-                    x=action_1,
-                    y=action_2,
-                    color="Head",
-                    hover_data=["Head", "Embedding"],
-                    labels={
-                        "value": "Congruence",
-                    },
-                )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-        gridmap_tab, search_tab = st.tabs(["Gridmap", "Search"])
-
-        with search_tab:
-            create_search_component(
-                df[["Head", "Embedding", "Score"]],
-                title="Search Full OV Circuit",
-                key="Search Full OV Circuit",
-            )
-
-        with gridmap_tab:
-            ov_gridmap_component(df, key="ov")
-
-        # # create streamlit tabs for each head:
-        # head_tabs = st.tabs([f"L{layer}H{head}" for head in heads])
-
-        # for i, head in enumerate(heads):
-        #     with head_tabs[i]:
-        #         write_schema()
-        #         for action in selected_actions:
-        #             columns = st.columns(len(selected_channels))
-        #             for i, channel in enumerate(selected_channels):
-        #                 with columns[i]:
-        #                     st.write("Head", head, "-", IDX_TO_ACTION[action])
-        #                     fig = px.imshow(
-        #                         OV_circuit_full_reshaped[
-        #                             head, channel, :, :, action
-        #                         ].T,
-        #                         color_continuous_midpoint=0,
-        #                         zmax=abs_max_val,
-        #                         zmin=-abs_max_val,
-        #                         color_continuous_scale=px.colors.diverging.RdBu,
-        #                         labels={"x": "X", "y": "Y"},
-        #                     )
-        #                     fig.update_layout(
-        #                         coloraxis_showscale=False,
-        #                         margin=dict(l=0, r=0, t=0, b=0),
-        #                     )
-        #                     fig.update_layout(height=180, width=400)
-        #                     fig.update_xaxes(showgrid=False, ticks="")
-        #                     fig.update_yaxes(showgrid=False, ticks="")
-        #                     st.plotly_chart(
-        #                         fig, use_container_width=True, autosize=True
-        #                     )
+        with pos_tab:
+            show_ov_pos_action_component(_dt)
 
 
-# @st.cache_data(experimental_allow_widgets=True)
+@st.cache_data(experimental_allow_widgets=True)
 def show_congruence(_dt):
     with st.expander("Show Congruence"):
         W_E_state = _dt.state_embedding.weight
