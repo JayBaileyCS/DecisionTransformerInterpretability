@@ -310,7 +310,7 @@ def get_ablation_function(ablate_to_mean, head_to_ablate, component="HEAD"):
 def show_activation_patching(dt, logit_dir, original_cache):
     token_labels = st.session_state.labels
     with st.expander("Activation Patching"):
-        corrupted_tokens, noise_or_denoise = get_corrupted_tokens_component(
+        corrupted_tokens, noise_or_denoise, alpha = get_corrupted_tokens_component(
             dt, key="act_patch"
         )
         # look at current state and do a forward pass
@@ -377,6 +377,7 @@ def show_activation_patching(dt, logit_dir, original_cache):
                 token_labels,
                 metric_func,
                 kwargs,
+                alpha=alpha,
             )
 
         with neuron_activation_difference_tab:
@@ -426,11 +427,12 @@ def show_activation_patching(dt, logit_dir, original_cache):
                 metric_func,
                 kwargs,
                 apply_metric_to_cache=True,
+                alpha=alpha,
             )
 
       
 def get_corrupted_tokens_component(dt, key=""):
-    a, b, c = st.columns(3)
+    a, b, c, d = st.columns(4)
     with a:
         path_patch_by = st.selectbox(
             "Patch by",
@@ -452,6 +454,15 @@ def get_corrupted_tokens_component(dt, key=""):
                 value=1,
                 key=key + "number_modifications_slider",
             )
+    with d:
+        alpha = st.slider(
+            "Alpha",
+            min_value=-2.0,
+            max_value=3.0,
+            value=1.0,
+            step=0.05,
+            key=key + "alpha_slider",
+        )
 
     from src.streamlit_app.environment import (
         preprocess_inputs,
@@ -583,7 +594,7 @@ def get_corrupted_tokens_component(dt, key=""):
     if torch.all(corrupted_tokens == previous_tokens):
         st.warning("Corrupted tokens are the same as previous tokens. Please make a change to the environment.")
 
-    return corrupted_tokens, noise_or_denoise
+    return corrupted_tokens, noise_or_denoise, alpha
 
 
 def get_corrupt_obs_instructions(key=""):
@@ -658,6 +669,7 @@ def patching_scan_umbrella_component(
     metric_func,
     kwargs,
     apply_metric_to_cache=False,
+    alpha=1,
 ):
     # easy section.
     (
@@ -723,6 +735,7 @@ def patching_scan_umbrella_component(
             metric_func,
             kwargs,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
 
     with residual_stream_by_block_tab:
@@ -734,6 +747,7 @@ def patching_scan_umbrella_component(
             metric_func,
             kwargs,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
 
     with head_all_positions_tab:
@@ -744,6 +758,7 @@ def patching_scan_umbrella_component(
             metric_func,
             kwargs,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
 
     with head_all_positions_by_component_tab:
@@ -754,6 +769,7 @@ def patching_scan_umbrella_component(
             metric_func,
             kwargs,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
 
     with minimize_tab:
@@ -767,6 +783,7 @@ def patching_scan_umbrella_component(
             metric_func,
             kwargs,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
 
     with mlp_patching_tab:
@@ -777,6 +794,7 @@ def patching_scan_umbrella_component(
             metric_func,
             kwargs,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
 
 
@@ -788,6 +806,7 @@ def layer_token_patch_component(
     patching_metric_func,
     patching_metric_kwargs={},
     apply_metric_to_cache=False,
+    alpha=1,
 ):
     # let's gate until we have a sense for run time.
     patch = patching.get_act_patch_resid_pre(
@@ -799,6 +818,7 @@ def layer_token_patch_component(
             **patching_metric_kwargs,
         ),
         apply_metric_to_cache=apply_metric_to_cache,
+        alpha=alpha,
     )
 
     fig = px.imshow(
@@ -827,6 +847,7 @@ def layer_token_block_patch_component(
     patching_metric_func,
     patching_metric_kwargs={},
     apply_metric_to_cache=False,
+    alpha=1,
 ):
     # let's gate until we have a sense for run time.
     patch = patching.get_act_patch_block_every(
@@ -838,6 +859,7 @@ def layer_token_block_patch_component(
             **patching_metric_kwargs,
         ),
         apply_metric_to_cache=apply_metric_to_cache,
+        alpha=alpha,
     )
 
     fig = px.imshow(
@@ -870,6 +892,7 @@ def head_all_positions_patch_component(
     patching_metric_func,
     patching_metric_kwargs={},
     apply_metric_to_cache=False,
+    alpha=1,
 ):
     patch = patching.get_act_patch_attn_head_out_all_pos(
         dt.transformer,
@@ -880,6 +903,7 @@ def head_all_positions_patch_component(
             **patching_metric_kwargs,
         ),
         apply_metric_to_cache=apply_metric_to_cache,
+        alpha=alpha,
     )
 
     fig = px.imshow(
@@ -905,6 +929,7 @@ def head_all_positions_by_input_patch_component(
     patching_metric_func,
     patching_metric_kwargs={},
     apply_metric_to_cache=False,
+    alpha=1,
 ):
     patch = patching.get_act_patch_attn_head_all_pos_every(
         dt.transformer,
@@ -915,6 +940,7 @@ def head_all_positions_by_input_patch_component(
             **patching_metric_kwargs,
         ),
         apply_metric_to_cache=apply_metric_to_cache,
+        alpha=alpha,
     )
 
     fig = px.imshow(
@@ -944,6 +970,7 @@ def head_by_component_and_position_patch_component(
     patching_metric_func,
     patching_metric_kwargs={},
     apply_metric_to_cache=False,
+    alpha=1,
 ):
     if st.checkbox(
         "Run this slightly expensive compute", key=str(apply_metric_to_cache)
@@ -957,6 +984,7 @@ def head_by_component_and_position_patch_component(
                 **patching_metric_kwargs,
             ),
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
 
         fig = px.imshow(
@@ -987,6 +1015,7 @@ def mlp_patch_single_neuron_component(
     patching_metric_func,
     patching_metric_kwargs={},
     apply_metric_to_cache=False,
+    alpha=1,
 ):
     with st.form(key=str(apply_metric_to_cache)):
         b, c = st.columns(2)
@@ -1064,6 +1093,7 @@ def get_act_patch_mlp(
     metric: Callable[[Tensor], Tensor],
     layer: int,
     apply_metric_to_cache: bool = False,
+    alpha=1,
 ) -> Tensor:
     def patch_neuron_activation(
         corrupted_mlp_act: Tensor, hook, neuron, clean_cache
@@ -1128,7 +1158,7 @@ def show_algebraic_value_editing(dt, logit_dir, original_cache):
 
         # 1. Create a corrupted forward pass using the same essential logic as activation
         # patching.
-        corrupted_tokens, noise_or_denoise = get_corrupted_tokens_component(
+        corrupted_tokens, noise_or_denoise, alpha = get_corrupted_tokens_component(
             dt, key="avec"
         )
         (
@@ -1258,7 +1288,7 @@ def show_path_patching(dt, logit_dir, clean_cache):
     with st.expander("Path Patching"):
         # 1. Create a corrupted forward pass using the same essential logic as activation
         # patching.
-        corrupted_tokens, patch_type = get_corrupted_tokens_component(
+        corrupted_tokens, patch_type, alpha = get_corrupted_tokens_component(
             dt, key="path_"
         )
 

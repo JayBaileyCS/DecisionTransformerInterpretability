@@ -86,6 +86,7 @@ def generic_activation_patch(
     index_df: Optional[pd.DataFrame] = None,
     return_cache: bool = False,
     apply_metric_to_cache: bool = False,
+    alpha: int = 1,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, pd.DataFrame]]:
     """
     A generic function to do activation patching, will be specialised to specific use cases.
@@ -109,6 +110,8 @@ def generic_activation_patch(
         index_df: A dataframe of indices to iterate over, implicitly fills in index_axis_names
         return_cache: Whether to return the patched cache. Defaults to False
         apply_metric_to_cache: Whether to apply the metric to the cache. Defaults to False
+        alpha: Strength of the patch to be applied. Corrupted activation = clean activation + alpha * (corrupted activation - clean activation) before applying the activation.
+        Alpha of 1 = corrupted activation, Alpha of 0 = clean activation. Defaults to 1.
 
     Returns:
         patched_output: The tensor of the patching metric for each patch. By default it has one dimension for each index dimension, via index_df set explicitly it is flattened with one element per row.
@@ -158,7 +161,8 @@ def generic_activation_patch(
         )
 
     # A generic patching hook - for each index, it applies the patch_setter appropriately to patch the activation
-    def patching_hook(corrupted_activation, hook, index, clean_activation):
+    def patching_hook(corrupted_activation, hook, index, clean_activation, alpha=1):
+        corrupted_activation = clean_activation + alpha * (corrupted_activation - clean_activation)
         return patch_setter(corrupted_activation, index, clean_activation)
 
     # Iterate over every list of indices, and make the appropriate patch!
@@ -175,6 +179,7 @@ def generic_activation_patch(
             patching_hook,
             index=index,
             clean_activation=clean_cache[current_activation_name],
+            alpha=alpha,
         )
 
         # Run the model with the patching hook and get the logits!
@@ -633,7 +638,7 @@ get_act_patch_attn_head_pattern_all_pos.__doc__ = """
 
 
 def get_act_patch_attn_head_all_pos_every(
-    model, corrupted_tokens, clean_cache, metric, apply_metric_to_cache=False
+    model, corrupted_tokens, clean_cache, metric, apply_metric_to_cache=False, alpha=1
 ) -> Float[torch.Tensor, "patch_type layer head"]:  # noqa: F722
     """Helper function to get activation patching results for every head (across all positions) for every act type (output, query, key, value, pattern). Wrapper around each's patching function, returns a stacked tensor of shape [5, n_layers, n_heads]
 
@@ -654,6 +659,7 @@ def get_act_patch_attn_head_all_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -663,6 +669,7 @@ def get_act_patch_attn_head_all_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -672,6 +679,7 @@ def get_act_patch_attn_head_all_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -681,6 +689,7 @@ def get_act_patch_attn_head_all_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -690,13 +699,14 @@ def get_act_patch_attn_head_all_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     return torch.stack(act_patch_results, dim=0)
 
 
 def get_act_patch_attn_head_by_pos_every(
-    model, corrupted_tokens, clean_cache, metric, apply_metric_to_cache=False
+    model, corrupted_tokens, clean_cache, metric, apply_metric_to_cache=False, alpha=1,
 ) -> Float[torch.Tensor, "patch_type layer pos head"]:  # noqa: F722
     """Helper function to get activation patching results for every head (by position) for every act type (output, query, key, value, pattern). Wrapper around each's patching function, returns a stacked tensor of shape [5, n_layers, pos, n_heads]
 
@@ -717,6 +727,7 @@ def get_act_patch_attn_head_by_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -726,6 +737,7 @@ def get_act_patch_attn_head_by_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -735,6 +747,7 @@ def get_act_patch_attn_head_by_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -744,6 +757,7 @@ def get_act_patch_attn_head_by_pos_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
 
@@ -754,6 +768,7 @@ def get_act_patch_attn_head_by_pos_every(
         clean_cache,
         metric,
         apply_metric_to_cache=apply_metric_to_cache,
+        alpha=alpha,
     )
     act_patch_results.append(
         einops.rearrange(pattern_results, "batch head pos -> batch pos head")
@@ -762,7 +777,7 @@ def get_act_patch_attn_head_by_pos_every(
 
 
 def get_act_patch_block_every(
-    model, corrupted_tokens, clean_cache, metric, apply_metric_to_cache=False
+    model, corrupted_tokens, clean_cache, metric, apply_metric_to_cache=False, alpha=1,
 ) -> Float[torch.Tensor, "patch_type layer pos"]:  # noqa: F722
     """Helper function to get activation patching results for the residual stream (at the start of each block), output of each Attention layer and output of each MLP layer. Wrapper around each's patching function, returns a stacked tensor of shape [3, n_layers, pos]
 
@@ -771,6 +786,7 @@ def get_act_patch_block_every(
         corrupted_tokens (torch.Tensor): The input tokens for the corrupted run. Has shape [batch, pos]
         clean_cache (ActivationCache): The cached activations from the clean run
         metric: A function from the model's output logits to some metric (eg loss, logit diff, etc)
+        alpha: Strength of the patch. 1 = complete patch, 0 = no patch.
 
     Returns:
         patched_output (torch.Tensor): The tensor of the patching metric for each patch. Has shape [3, n_layers, pos]
@@ -783,6 +799,7 @@ def get_act_patch_block_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -792,6 +809,7 @@ def get_act_patch_block_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     act_patch_results.append(
@@ -801,6 +819,7 @@ def get_act_patch_block_every(
             clean_cache,
             metric,
             apply_metric_to_cache=apply_metric_to_cache,
+            alpha=alpha,
         )
     )
     return torch.stack(act_patch_results, dim=0)
