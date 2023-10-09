@@ -162,7 +162,7 @@ def generic_activation_patch(
 
     # A generic patching hook - for each index, it applies the patch_setter appropriately to patch the activation
     def patching_hook(corrupted_activation, hook, index, clean_activation, alpha=1):
-        corrupted_activation = clean_activation + alpha * (corrupted_activation - clean_activation)
+        clean_activation = corrupted_activation + alpha * (clean_activation - corrupted_activation)
         return patch_setter(corrupted_activation, index, clean_activation)
 
     # Iterate over every list of indices, and make the appropriate patch!
